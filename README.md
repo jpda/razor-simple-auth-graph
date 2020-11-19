@@ -74,7 +74,7 @@ Next we need to update some settings in our application. Go back to your editor.
 services.Configure<MicrosoftIdentityOptions>(options => options.ResponseType = OpenIdConnectResponseType.Code);
 ```
 
-- Use Ctrl + . to prompt IntelliSense and resolve the missing dependencies, or add `using using Microsoft.AspNetCore.Authentication.OpenIdConnect;` to the top of your file.
+- Use Ctrl + . to prompt IntelliSense and resolve the missing dependencies, or add `using Microsoft.AspNetCore.Authentication.OpenIdConnect;` to the top of your file.
 
 ### 6 - Run the app
 
@@ -94,17 +94,119 @@ services.Configure<MicrosoftIdentityOptions>(options => options.ResponseType 
 
 ### 7 - add Microsoft Graph
 
-- Open `Startup.cs`
-- Add the following code
-  - Line 33 -> add `services.AddHttpClient();
-  - Replace this code
-- Update `Index.cshtml.cs`
-- Copy paste the following code
+We need to add `EnabledTokenAcquisitionToCallDownstreamApi()` in `Startup.cs` which gives us a method to get our tokens in pages, and a cache for storing those tokens with `AddInMemoryCache()`.
+Replace this code:
 
-> Make sure to update the Namespace to your project
+```csharp
+services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApp(Configuration.GetSection("AzureAd"));
+```
 
-- Update `Index.cshtml`
-- Paste the following code into the page
+with:
+
+```csharp
+services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApp(Configuration.GetSection("AzureAd"))
+            .EnableTokenAcquisitionToCallDownstreamApi()
+            .AddInMemoryTokenCaches();
+```
+
+Your `ConfigureServices` method should look like this in total:
+
+```csharp
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddHttpClient();
+    services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApp(Configuration.GetSection("AzureAd"))
+        .EnableTokenAcquisitionToCallDownstreamApi()
+        .AddInMemoryTokenCaches()
+        ;
+    services.Configure<MicrosoftIdentityOptions>(options => {
+        options.ResponseType = OpenIdConnectResponseType.Code;
+    });
+    services.AddAuthorization(options =>
+    {
+        // By default, all incoming requests will be authorized according to the default policy
+        options.FallbackPolicy = options.DefaultPolicy;
+    });
+    services.AddRazorPages()
+        .AddMvcOptions(options => {})
+        .AddMicrosoftIdentityUI();
+}
+```
+
+Next we need to update our Index.cshtml.cs page to include our new services.
+
+First, at the top of our class, let's add `AuthorizeForScopes`, which declares which scopes or permissions we're going to need in our page.
+
+```csharp
+[AuthorizeForScopes(Scopes = new[] { "User.Read" })]
+public class IndexModel : PageModel
+{
+  //snip
+```
+
+Now we add a couple of private variables to our class and set them in the constructor, plus we add a field called `MeData` which we'll use to show data on the page:
+
+```csharp
+private readonly ITokenAcquisition _tokenGetter;
+private readonly HttpClient _httpClient;
+
+public string MeData;
+
+public IndexModel(ILogger<IndexModel> logger, ITokenAcquisition tokenGetter, IHttpClientFactory clientFactory)
+{
+    _logger = logger;
+    _tokenGetter = tokenGetter;
+    _httpClient = clientFactory.CreateClient();
+}
+```
+
+Lastly, we need to actually get a token and call Microsoft Graph in the `OnGet` method. We're using Graph, but this could be any API protected with Azure AD.
+
+```csharp
+public async Task OnGet()
+{
+    var accessToken = await _tokenGetter.GetAccessTokenForUserAsync(new[] { "User.Read" });
+
+    _httpClient.DefaultRequestHeaders.Authorization =
+        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+    var result = await _httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+
+    if (result.IsSuccessStatusCode)
+    {
+        MeData = await result.Content.ReadAsStringAsync();
+    }
+    else
+    {
+        MeData = $"{result.StatusCode}";
+    }
+}
+```
+
+Now that we're getting data from the API, let's quickly show it on our page. Open `Index.cshtml` and add this bit into the `text-center` div:
+
+```csharp
+<div>@Model.MeData</div>
+```
+
+So that our page looks like this:
+
+```csharp
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome</h1>
+    <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+    <div>@Model.MeData</div>
+</div>
+
+```
 
 ### 8 - Get to know Graph Explorer
 
@@ -113,9 +215,38 @@ services.Configure<MicrosoftIdentityOptions>(options => options.ResponseType 
 
 ### 9 - add more MS Graph data
 
-- Open `Index.cshtml.cs`
-- Update the code with the following:
+First we need to declare the extra scopes we need - in our case, we also need the `Mail.Read` scope to read a user's mail. Add that to our existing `AuthorizeForScopes` attribute at the top of the class in `Index.cshtml.cs`.
 
-- Update `Index.cshtml`
-- Paste the following code:
-- Save and run the project
+```csharp
+[AuthorizeForScopes(Scopes = new[] { "User.Read", "Mail.Read" })]
+```
+
+Then rinse and repeat - we need to add extra code for the second API call. First, a new class field to hold the new data:
+
+```csharp
+public string MailData;
+```
+
+Some new code at the end of the `OnGet` method to get the data from Graph:
+
+```csharp
+result = await _httpClient.GetAsync("https://graph.microsoft.com/beta/me/messages?$select=createdDateTime,subject,from");
+
+if (result.IsSuccessStatusCode)
+{
+    MailData = await result.Content.ReadAsStringAsync();
+}
+else
+{
+    MailData = $"{result.StatusCode}";
+}
+```
+
+And lastly, an extra `div` on `Index.cshtml` to show the data:
+
+```csharp
+<div>
+    <h1>mail data</h1>
+    <div>@Model.MailData</div>
+</div>
+```

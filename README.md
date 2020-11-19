@@ -98,14 +98,89 @@ services.Configure<MicrosoftIdentityOptions>(options => options.ResponseType 
 - Add the following code
   - Line 33 -> add `services.AddHttpClient();
   - Replace this code
-- Update `Index.cshtml.cs`
+  ```
+   services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+                .AddMicrosoftIdentityWebApp(Configuration.GetSection("AzureAd"));
+  ```
+  with
+  ```
+   services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+                .AddMicrosoftIdentityWebApp(Configuration.GetSection("AzureAd"))
+                .EnableTokenAcquisitionToCallDownstreamApi()
+                .AddInMemoryTokenCaches();
+  ```
+- Update the `Index.cshtml.cs` 
 - Copy paste the following code
+  ```
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Net.Http;
+    using System.Threading.Tasks;
+    using Microsoft.AspNetCore.Mvc;
+    using Microsoft.AspNetCore.Mvc.RazorPages;
+    using Microsoft.Extensions.Logging;
+    using Microsoft.Identity.Web;
 
+    namespace <YourNameSpace>
+    {
+        [AuthorizeForScopes(Scopes = new[] { "User.Read" })]
+        public class IndexModel : PageModel
+        {
+            private readonly ILogger<IndexModel> _logger;
+
+            private readonly ITokenAcquisition _tokenGetter;
+            private readonly HttpClient _httpClient;
+
+            public string MeData;
+
+            public string MailData;
+
+            public IndexModel(ILogger<IndexModel> logger, ITokenAcquisition tokenGetter, IHttpClientFactory clientFactory)
+            {
+                _logger = logger;
+                _tokenGetter = tokenGetter;
+                _httpClient = clientFactory.CreateClient();
+            }
+
+            public async Task OnGet()
+            {
+                var accessToken = await _tokenGetter.GetAccessTokenForUserAsync(new[] { "User.Read", "Mail.Read" });
+
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+                var result = await _httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+
+                if (result.IsSuccessStatusCode)
+                {
+                    MeData = await result.Content.ReadAsStringAsync();
+                }
+                else
+                {
+                    MeData = $"{result.StatusCode}";
+                }
+            }
+        }
+    }
+
+  ```
 > Make sure to update the Namespace to your project
 
-- Update `Index.cshtml`
+- Update `Index.cshtml` 
 - Paste the following code into the page
+```
+  @page
+  @model IndexModel
+  @{
+      ViewData["Title"] = "Home page";
+  }
 
+  <div class="text-center">
+      <h1 class="display-4">Welcome</h1>
+      <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+      <div>@Model.MeData</div>
+  </div>
+```
 ### 8 - Get to know Graph Explorer
 
 - Open the broswer
@@ -115,7 +190,87 @@ services.Configure<MicrosoftIdentityOptions>(options => options.ResponseType 
 
 - Open `Index.cshtml.cs`
 - Update the code with the following:
+```
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Web;
+
+namespace <YourNameSpace>
+{
+    [AuthorizeForScopes(Scopes = new[] { "User.Read", "Mail.Read" })]
+    public class IndexModel : PageModel
+    {
+        private readonly ILogger<IndexModel> _logger;
+
+        private readonly ITokenAcquisition _tokenGetter;
+        private readonly HttpClient _httpClient;
+
+        public string MeData;
+
+        public string MailData;
+
+        public IndexModel(ILogger<IndexModel> logger, ITokenAcquisition tokenGetter, IHttpClientFactory clientFactory)
+        {
+            _logger = logger;
+            _tokenGetter = tokenGetter;
+            _httpClient = clientFactory.CreateClient();
+        }
+
+        public async Task OnGet()
+        {
+            var accessToken = await _tokenGetter.GetAccessTokenForUserAsync(new[] { "User.Read", "Mail.Read" });
+
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            var result = await _httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+
+            if (result.IsSuccessStatusCode)
+            {
+                MeData = await result.Content.ReadAsStringAsync();
+            }
+            else
+            {
+                MeData = $"{result.StatusCode}";
+            }
+
+            result = await _httpClient.GetAsync("https://graph.microsoft.com/beta/me/messages?$select=createdDateTime,subject,from");
+
+            if (result.IsSuccessStatusCode)
+            {
+                MailData = await result.Content.ReadAsStringAsync();
+            }
+            else
+            {
+                MailData = $"{result.StatusCode}";
+            }
+        }
+    }
+}
+```
 
 - Update `Index.cshtml`
 - Paste the following code:
+```
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome</h1>
+    <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+    <div>@Model.MeData</div>
+</div>
+<div>
+    <h1>mail data</h1>
+    <div>@Model.MailData</div>
+</div>
+```
 - Save and run the project
